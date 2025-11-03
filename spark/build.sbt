@@ -21,3 +21,12 @@ assembly / assemblyMergeStrategy := {
 assembly / assemblyShadeRules := Seq(
   ShadeRule.rename("shapeless.**" -> "shadeshapeless.@1").inAll
 )
+
+// Fix for Spark/Java module access error in tests
+Test / classLoaderLayeringStrategy := ClassLoaderLayeringStrategy.ScalaLibrary
+
+// Allow Spark to access sun.nio.ch.DirectBuffer on Java 17+
+Test / javaOptions += "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED"
+
+// Enable forking so javaOptions are respected in tests
+Test / fork := true
