@@ -1,10 +1,19 @@
 ## Programming in Scala for Big Data Systems, Fall 2025
 Scala Project for Harvard Extension course CSCI E-88C, Fall, 2025. See course details at [Scala for Big Data](https://courses.dce.harvard.edu/?details&srcdb=202601&crn=16769).
 
-
 This project is a multi-module setup for Scala applications that integrate with big data frameworks like Spark, Beam, and Kafka. It is designed to facilitate development in a structured manner, allowing for modular code organization and easy dependency management.
 
 The project requires Java 17, Scala 2.13 and sbt 1.9.2+ environment to run.
+
+## 🚀 Quick Start (Week 8 Project)
+
+```bash
+# 1. Build and run the Spark job
+./runSparkJob.sh
+
+# 2. Open dashboard in browser
+open http://localhost:8501
+```
 
 ## Project Structure
 - **core**: Contains the core library code shared across other modules.
@@ -15,6 +24,15 @@ The project requires Java 17, Scala 2.13 and sbt 1.9.2+ environment to run.
 
 ## Build Tool
 This project uses [SBT](https://www.scala-sbt.org/) (Scala Build Tool) for building and managing dependencies. SBT allows for incremental compilation and easy management of multi-module projects.
+
+## Running SparkJobSpec Tests Only
+To run only the tests in the `SparkJobSpec` suite (located in the `spark` module), use the following sbt command:
+
+```bash
+sbt "testOnly org.cscie88c.spark.SparkJobSpec"
+```
+
+This will execute only the tests defined in the `SparkJobSpec` class, which are used to validate Spark job logic and data processing functions.
 
 ## Getting Started
 1. **Clone the repository**:
@@ -151,6 +169,239 @@ For source files,
 For test files.
 
 `sbt "test:scalafix RemoveUnused"`
+
+# Project week8
+This section documents the KPIs produced by the Spark job and how to run the job locally using the provided `runSparkJob.sh` script.
+
+## Code Architecture
+
+**Data Processing Pipeline:**
+1. **Bronze Layer** (`loadInputFile`, `loadTaxiZoneLookup`): 
+   - Loads raw parquet data into TaxiTrip dataset
+   - Loads NYC Taxi Zone lookup data from CSV (LocationID, Borough, Zone, service_zone)
+2. **Silver Layer** (`cleanData`, `enrichWithZoneData`): 
+   - Validates and cleans data:
+     - `validateDataQuality()`: Fail-fast validation (required columns, null rates, duplicates)
+     - `validateTimeSeriesCompleteness()`: Ensures no missing weeks
+     - `applyDataFilters()`: Row-level filtering (valid fares, distances, timestamps, etc.)
+   - Enriches trips with zone data:
+     - Inner joins with taxi zone lookup on PULocationID and DOLocationID
+     - Adds borough, zone, and service_zone information for both pickup and dropoff locations
+     - Only includes trips with valid location IDs
+3. **Gold Layer** (`calculateKPIs`): Computes business metrics
+   - Individual KPI calculation methods with documented formulas
+   - Weekly aggregation by pickup borough
+   - Output persistence
+
+**Individual KPI Methods:**
+- `enrichWithZoneData()`: Enriches trips with pickup and dropoff borough/zone data via inner joins
+- `filterToRecentWeeks()`: Filters to N most recent weeks
+- `calculatePeakHourPercentage()`: Identifies peak hour and calculates trip percentage (returns tuple)
+- `calculateAverageRevenuePerMile()`: Revenue per mile
+- `calculateNightTripCount()`: Night trips (midnight-6am)
+- `calculateAverageMinutesPerMile()`: Trip duration per mile
+- `generateWeeklyMetrics()`: Aggregates metrics by week and pickup borough
+- `saveWeeklyMetrics()`: Persists weekly metrics to parquet
+
+### KPIs and exact formulas
+The Spark job writes a dataset with the following KPI fields. The formulas below match the code implementation in `spark/src/main/scala/org/cscie88c/spark/SparkJob.scala`.
+
+- **week_start** (String)
+  - The ISO week start date for the trips included in the row (computed with date_trunc("week", pickup_ts) formatted as `yyyy-MM-dd`).
+
+- **borough** (String)
+  - The pickup borough from the NYC Taxi Zone lookup table (PU_Borough).
+  - Enriched via inner join on PULocationID with the taxi zone lookup CSV.
+  - Only trips with valid location IDs in the lookup table are included.
+
+- **trip_volume** (Long)
+  - Formula: `trip_volume = COUNT(*)`
+  - Meaning: number of trips in that week for that borough (after cleaning and filtering by the time window).
+
+- **total_trips** (Long)
+  - Formula: `total_trips = COUNT(*)` over the same week across all boroughs
+  - Meaning: total number of trips in that week (used to compute percentages).
+
+- **total_revenue** (Double)
+  - Formula: `total_revenue = SUM(total_amount)`
+  - Meaning: total revenue (sum of `total_amount`) for the week across all boroughs.
+
+- **peak_hour** (Int)
+  - Method: `calculatePeakHourPercentage()` (returns tuple of hour and percentage)
+  - Code computation summary:
+    1. Compute trips per pickup hour h: `hour_count(h) = COUNT(*)` for each hour h (0..23) over the filtered range.
+    2. Identify the hour with maximum trip count
+  - Formula: `peak_hour = argmax_h(COUNT(trips where hour=h))`
+  - Meaning: The hour (0-23) with the highest trip volume during the filtered range.
+
+- **peak_hour_trip_percentage** (Double)
+  - Method: `calculatePeakHourPercentage()` (returns tuple of hour and percentage)
+  - Code computation summary:
+    1. Compute trips per pickup hour h: `hour_count(h) = COUNT(*)` for each hour h (0..23) over the filtered range.
+    2. `totalTrips = SUM_h hour_count(h)`
+    3. `peakPercentage = (MAX_h hour_count(h) / totalTrips) * 100`
+  - Formula: `peak_hour_trip_percentage = (max_h COUNT(trips where hour=h) / totalTrips) * 100`
+  - Meaning: percentage of trips that occurred in the busiest (peak) hour during the filtered range. (If totalTrips == 0, this is set to 0.)
+
+- **avg_minutes_per_mile** (Long)
+  - Method: `calculateAverageMinutesPerMile()`
+  - Code computation summary:
+    1. `trip_minutes = (unix_timestamp(dropoff_ts) - unix_timestamp(pickup_ts)) / 60.0`
+    2. `minutes_per_mile = trip_minutes / trip_distance` (only for rows where trip_distance > 0)
+    3. `avg_minutes_per_mile = CAST(AVG(minutes_per_mile) AS Long)`
+  - Formula: `avg_minutes_per_mile = CAST(AVG((dropoff_ts - pickup_ts) / 60 / trip_distance) AS LONG)`
+  - Meaning: average minutes per mile across trips (returned as a long integer). Trips with non-positive distance are excluded from this calculation.
+
+- **avg_revenue_per_mile** (Double)
+  - Method: `calculateAverageRevenuePerMile()`
+  - Formula: `avg_revenue_per_mile = AVG(total_amount / trip_distance)` (computed only for trip_distance > 0)
+  - Meaning: the average revenue per mile across trips in the filtered window.
+
+- **night_trip_percentage** (Double)
+  - Method: `calculateNightTripPercentage()`
+  - Code computation summary: `nightTripPercentage = (COUNT(trips where hour >= 0 and hour < 6) / total_trips) * 100`
+  - Formula: `night_trip_percentage = (night_trips / total_trips) * 100`
+  - Meaning: percentage of trips that occurred during night hours (midnight to 6am).
+
+### Where outputs are written
+The Spark job writes two locations under the provided output path argument (outpath):
+
+- `outpath/weekly_metrics` — parquet files containing weekly metrics grouped by `week_start` and `borough` (this is written inside `calculateKPIs(...)`).
+- `outpath/kpis` — parquet files containing the final KPIs dataset (this is written by `saveOutput(...)`).
+
+When using the included `runSparkJob.sh`, the script passes `/opt/spark-data/output/` as the `outpath`. Because the host `data/` directory is mounted into the container at `/opt/spark-data`, the resulting files will appear on the host under `data/output/kpis` and `data/output/weekly_metrics`.
+
+### How to run the Spark job (quick steps)
+1. Ensure you have the required data files in the `data/` folder:
+   - **Input Parquet**: Place your taxi trip data (example: `data/yellow_tripdata_2025-01.parquet`). The job expects a Parquet file with the taxi schema used in `TaxiTrip` (see `spark/src/main/scala/.../SparkJob.scala` for required columns).
+   - **Taxi Zone Lookup CSV**: Place the NYC Taxi Zone lookup file (example: `data/taxi_zone_lookup.csv`) with columns: LocationID, Borough, Zone, service_zone.
+
+2. From the repository root, make the run script executable (if needed) and run it:
+
+```bash
+chmod +x runSparkJob.sh
+./runSparkJob.sh
+```
+
+The `runSparkJob.sh` script will:
+- build the Spark uberjar (`sbt spark/assembly`),
+- copy the jar to `docker/apps/spark`,
+- start the Docker compose environment, and
+- submit the Spark job inside the `spark-master` container (the script uses `/opt/spark-data/yellow_tripdata_2025-01.parquet` as the input, `/opt/spark-data/taxi_zone_lookup.csv` as the zone lookup file, and `/opt/spark-data/output/` as the output directory).
+
+3. After the job completes, inspect the output directory on the host:
+
+- `data/output/kpis` (Parquet files with the final KPIs)
+- `data/output/weekly_metrics` (Parquet files with weekly metrics by borough)
+
+You can inspect Parquet files with tools like `parquet-tools` or by reading them with Spark/Python. Optionally, you may `docker exec` into the `spark-master` container and inspect `/opt/spark-data/output/` directly.
+
+### Command-line Arguments
+The Spark job accepts the following arguments:
+1. **input_file** (required): Path to the taxi trip parquet file
+2. **taxi_zone_lookup_csv** (required): Path to the NYC Taxi Zone lookup CSV file
+3. **output_path** (required): Path where KPIs and weekly metrics will be written
+4. **weeks** (optional): Number of weeks to include in KPI calculations (default is 4)
+
+Example with custom number of weeks (inside the container):
+
+```bash
+/opt/spark/bin/spark-submit --class org.cscie88c.spark.SparkJob --master local[*] \
+  /opt/spark-apps/SparkJob.jar \
+  /opt/spark-data/yellow_tripdata_2025-01.parquet \
+  /opt/spark-data/taxi_zone_lookup.csv \
+  /opt/spark-data/output/ \
+  8
+```
+
+---
+
+### NYC Taxi Analytics Dashboard (Streamlit + Plotly)
+
+An interactive web dashboard that visualizes the Parquet outputs from the SparkJob, providing comprehensive analytics with beautiful charts and insights.
+
+**Features:**
+- 📈 **Real-time KPI Metrics**: Total trips, revenue, efficiency metrics
+- �️ **Borough-Level Analytics**: All metrics aggregated by pickup borough using NYC Taxi Zone data
+- �📊 **Interactive Visualizations**: 
+  - Bar charts for trip volume by pickup borough
+  - Pie charts for revenue distribution by pickup location
+  - Line charts for trends over time
+  - Heatmaps for weekly activity patterns by borough
+  - Performance comparisons across pickup boroughs
+- 🎨 **Modern UI**: Clean design with Plotly charts and custom styling
+- 📥 **Data Export**: Download processed data as CSV
+- 🔄 **Auto-refresh**: Updates automatically when SparkJob runs
+
+**Technical Details:**
+- Location: `docker/apps/spark/dashboard`
+- Service: `evidence-dashboard` in `docker-compose-spark.yml`
+- Port: `8501` (http://localhost:8501)
+- Stack: Streamlit + Plotly + Pandas + PyArrow
+- Data Sources:
+  - `./data/output/kpis` — final KPIs (parquet)
+  - `./data/output/weekly_metrics` — weekly metrics (parquet)
+
+**Updated Field Names & Zone Enrichment (November 2025):**
+The dashboard now uses the refactored field names and zone-enriched data:
+- `borough` (pickup borough from NYC Taxi Zone lookup)
+- `peak_hour` (the hour 0-23 with highest trip volume)
+- `peak_hour_trip_percentage` (percentage of trips in busiest hour)
+- `avg_minutes_per_mile` (average trip duration per mile)
+- `night_trip_percentage` (percentage of trips from midnight-6am)
+- `avg_revenue_per_mile` (average revenue per mile)
+- All borough metrics are based on **pickup location** (PU_Borough)
+- Dashboard displays peak hour as a **2-hour range** (e.g., "07-09", "17-19")
+
+**Quick Start:**
+
+1. **Run the Spark job** to generate data (if not already done):
+   ```bash
+   ./runSparkJob.sh
+   ```
+
+2. **Build and start the dashboard**:
+   ```bash
+   docker-compose -f docker-compose-spark.yml build evidence-dashboard
+   docker-compose -f docker-compose-spark.yml up -d evidence-dashboard
+   ```
+
+3. **Open in browser**: http://localhost:8501
+
+4. **Stop the dashboard**:
+   ```bash
+   docker-compose -f docker-compose-spark.yml down
+   ```
+
+**Dashboard Sections:**
+
+1. **Key Performance Indicators**
+   - 8 metric cards showing critical business metrics
+   - Total trips, revenue, efficiency, and operational stats
+   - Week and borough coverage indicators
+
+2. **Visual Analytics**
+   - Trip volume by pickup borough (top 10)
+   - Revenue distribution by pickup location (pie chart)
+   - Weekly trends for trips and revenue
+   - Performance metrics by pickup borough (revenue/mile, minutes/mile)
+   - Trip efficiency comparison across boroughs
+
+3. **Weekly Activity Heatmap**
+   - Shows trip patterns across weeks and pickup boroughs
+   - Identifies high-activity periods and locations
+   - Top 15 boroughs by volume
+
+4. **Raw Data Tables**
+   - Sortable, filterable data grid with borough enrichment
+   - Summary statistics
+   - CSV export functionality
+
+**Troubleshooting:**
+- **No data showing?** Verify `data/output/kpis` and `data/output/weekly_metrics` exist with parquet files
+- **Port conflict?** Change port mapping in `docker-compose-spark.yml`
+- **Dashboard not updating?** Restart the container: `docker-compose -f docker-compose-spark.yml restart evidence-dashboard`
+
 
 ## License
 Copyright 2025, Edward Sumitra
