@@ -37,4 +37,4 @@ project/plugins/project/
 scalaHomework.zip
 
 # Ignore data files
-data/
+data/output
