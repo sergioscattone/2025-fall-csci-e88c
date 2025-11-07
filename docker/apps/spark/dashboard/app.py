@@ -30,11 +30,9 @@ st.sidebar.write(f"**EVIDENCE_ENV:** {env}")
 
 DATA_ROOT = "/opt/spark-data/output"
 KPIS_PATH = os.path.join(DATA_ROOT, "kpis")
-WEEKLY_PATH = os.path.join(DATA_ROOT, "weekly_metrics")
 
 st.sidebar.header("📁 Data Locations")
 st.sidebar.code(KPIS_PATH)
-st.sidebar.code(WEEKLY_PATH)
 
 @st.cache_data(ttl=60)
 def load_parquet(path):
@@ -49,14 +47,12 @@ def load_parquet(path):
         return None
 
 kpis_df = load_parquet(KPIS_PATH)
-weekly_df = load_parquet(WEEKLY_PATH)
 
-if kpis_df is None and weekly_df is None:
+if kpis_df is None:
     st.warning("⚠️ No parquet outputs found. Run the Spark job to generate data at ./data/output/")
     st.info("Run: `./runSparkJob.sh` from the repository root")
 else:
-    # Use weekly_df as primary source (it has all the data)
-    df = weekly_df if weekly_df is not None else kpis_df
+    df = kpis_df
     
     if df is not None and not df.empty:
         # Top-level metrics
@@ -151,43 +147,6 @@ else:
                     hole=0.4
                 )
                 fig.update_traces(textposition='inside', textinfo='percent+label')
-                st.plotly_chart(fig, use_container_width=True)
-            
-            # Row 2: Trends over time
-            st.subheader("📅 Trends Over Time")
-            col3, col4 = st.columns(2)
-            
-            with col3:
-                # Trip volume trend
-                weekly_totals = df.groupby('week_start').agg({
-                    'total_trips': 'first',
-                    'trip_volume': 'sum'
-                }).reset_index().sort_values('week_start')
-                
-                fig = px.line(
-                    weekly_totals,
-                    x='week_start',
-                    y='total_trips',
-                    markers=True,
-                    title="Total Trips per Week",
-                    labels={'week_start': 'Week', 'total_trips': 'Total Trips'}
-                )
-                fig.update_traces(line_color='#1f77b4', line_width=3)
-                st.plotly_chart(fig, use_container_width=True)
-            
-            with col4:
-                # Revenue trend
-                weekly_revenue = df.groupby('week_start')['total_revenue'].first().reset_index().sort_values('week_start')
-                
-                fig = px.line(
-                    weekly_revenue,
-                    x='week_start',
-                    y='total_revenue',
-                    markers=True,
-                    title="Total Revenue per Week",
-                    labels={'week_start': 'Week', 'total_revenue': 'Revenue ($)'}
-                )
-                fig.update_traces(line_color='#2ca02c', line_width=3)
                 st.plotly_chart(fig, use_container_width=True)
             
             # Row 3: Performance Metrics
@@ -307,56 +266,8 @@ else:
                     hovermode='x unified'
                 )
                 st.plotly_chart(fig, use_container_width=True)
-            
-            # Row 4b: Time efficiency trends over weeks
-            st.subheader("📈 Time Efficiency Trends Over Weeks")
-            
-            # Calculate weekly average minutes per mile
-            weekly_efficiency = df.groupby('week_start').agg({
-                'avg_minutes_per_mile': 'first'
-            }).reset_index().sort_values('week_start')
-            
-            fig = px.line(
-                weekly_efficiency,
-                x='week_start',
-                y='avg_minutes_per_mile',
-                markers=True,
-                title="Average Minutes per Mile Over Time",
-                labels={
-                    'week_start': 'Week Start',
-                    'avg_minutes_per_mile': 'Avg Minutes per Mile'
-                }
-            )
-            fig.update_traces(line_color='#ff7f0e', line_width=3, marker=dict(size=10))
-            fig.update_layout(height=350)
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Row 6: Heatmap of weekly activity by borough (top boroughs only)
-            st.subheader("🔥 Weekly Activity Heatmap by Pickup Borough")
-            try:
-                # Get top 15 boroughs by total volume
-                top_boroughs_list = df.groupby('borough')['trip_volume'].sum().nlargest(15).index.tolist()
-                heatmap_data = df[df['borough'].isin(top_boroughs_list)].pivot_table(
-                    index='borough',
-                    columns='week_start',
-                    values='trip_volume',
-                    aggfunc='sum'
-                ).fillna(0)
-                
-                fig = px.imshow(
-                    heatmap_data,
-                    labels=dict(x="Week", y="Pickup Borough", color="Trip Volume"),
-                    x=heatmap_data.columns,
-                    y=heatmap_data.index,
-                    color_continuous_scale='YlOrRd',
-                    aspect="auto"
-                )
-                fig.update_layout(title="Trip Volume Heatmap by Pickup Location (Top 15 Boroughs)")
-                st.plotly_chart(fig, use_container_width=True)
-            except Exception as e:
-                st.warning(f"Could not generate heatmap: {e}")
-            
-            # Row 7: Weekly Trip Volume Table/Chart
+
+            # Row 4: Weekly Trip Volume Table/Chart
             st.subheader("📅 Weekly Trip Volume by Pickup Borough")
             try:
                 # Prepare data aggregated by week and borough
@@ -418,7 +329,7 @@ else:
         st.markdown("---")
         st.header("📋 Raw Data")
         
-        tab1, tab2 = st.tabs(["Weekly Metrics", "Summary Statistics"])
+        tab1, tab2 = st.tabs(["KPI Data", "Summary Statistics"])
         
         with tab1:
             if df is not None:

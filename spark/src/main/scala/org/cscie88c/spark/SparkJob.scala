@@ -149,9 +149,17 @@ object SparkJob {
     import df.sparkSession.implicits._
 
     // Step 1: Data quality validation (fail-fast on critical issues)
+    // These checks will throw immediately if the input is fundamentally broken
+    // so we don't waste time computing on bad data. Examples include:
+    //  - Missing required columns
+    //  - Excessive null rates in critical columns (data drift/ingestion issues)
+    //  - Duplicate IDs (if present)
+    //  - Missing weeks in the series (holes in upstream ingestion)
     validateDataQuality(df)
 
     // Step 2: Apply row-level filters to remove invalid records
+    // Filters keep only records that make sense physically or by business rules
+    // (non-negative fares, positive distance, valid passenger counts, etc.)
     val cleaned = applyDataFilters(df)
 
     // Convert to typed Dataset
@@ -179,6 +187,7 @@ object SparkJob {
     }
 
     // Check null rates
+    // Fail fast if a required column has more than 20% nulls indicating upstream issues.
     val nullRateThreshold = 0.20
     val highNulls = requiredCols.map { c =>
       val nullCount = df.filter(F.col(c).isNull).count()
@@ -192,6 +201,8 @@ object SparkJob {
     }
 
     // Check for duplicate IDs if present
+    // Some datasets provide a unique trip identifier. If available, enforce uniqueness
+    // to prevent double counting in aggregations down the line.
     if (df.columns.contains("trip_id")) {
       val hasDuplicates = df.groupBy("trip_id").count()
         .filter(F.col("count") > 1).limit(1).count() > 0
@@ -201,6 +212,8 @@ object SparkJob {
     }
 
     // Check time series completeness
+    // Ensures that the downstream weekly metrics are computed on a continuous
+    // weekly time series with no gaps between min and max pickup dates.
     validateTimeSeriesCompleteness(df)
   }
 
@@ -209,9 +222,9 @@ object SparkJob {
    */
   private def validateTimeSeriesCompleteness(df: org.apache.spark.sql.DataFrame): Unit = {
     import df.sparkSession.implicits._
-    
+    // Parse pickup timestamps in a consistent type we can aggregate on.
     val dfWithTs = df.withColumn("pickup_ts", F.col("tpep_pickup_datetime").cast("timestamp"))
-    
+    // Compute min and max pickup timestamps to define the observed window.
     val (minPickupOpt, maxPickupOpt) = (
       dfWithTs.agg(F.min("pickup_ts")).as[java.sql.Timestamp].collect().headOption,
       dfWithTs.agg(F.max("pickup_ts")).as[java.sql.Timestamp].collect().headOption
@@ -221,10 +234,13 @@ object SparkJob {
       throw new RuntimeException("No valid pickup timestamps found")
     }
 
+    // Convert to LocalDate to compare by calendar weeks and compute the expected
+    // number of distinct weeks in the observed range (inclusive).
     val minDate = minPickupOpt.get.toInstant.atZone(java.time.ZoneId.systemDefault()).toLocalDate
     val maxDate = maxPickupOpt.get.toInstant.atZone(java.time.ZoneId.systemDefault()).toLocalDate
     val expectedWeeks = java.time.temporal.ChronoUnit.WEEKS.between(minDate, maxDate).toInt + 1
 
+    // Derive a year-week key (e.g., 2025-07) from each pickup and count distinct weeks.
     val actualWeeks = dfWithTs
       .withColumn("week", F.concat_ws("-",
         F.year(F.col("pickup_ts")).cast("string"),
@@ -232,6 +248,7 @@ object SparkJob {
       ))
       .select("week").distinct().count()
 
+    // If we observe fewer distinct weeks than expected, there is a hole in the data.
     if (actualWeeks < expectedWeeks) {
       throw new RuntimeException(
         f"Incomplete time series: found $actualWeeks weeks, expected $expectedWeeks"
@@ -292,9 +309,6 @@ object SparkJob {
       nightTripPercentage
     )
 
-    // Save weekly metrics to output path
-    saveWeeklyMetrics(weeklyMetrics, outputPath)
-
     weeklyMetrics
   }
 
@@ -308,6 +322,8 @@ object SparkJob {
     val zonesDF = zones.toDF()
     
     // Join with pickup location zones (inner join)
+    // Retain only trips whose pickup location ID matches a known zone,
+    // and copy over the Borough/Zone/Service attributes with PU_ prefixes.
     val withPickupZone = tripsDF.join(
       zonesDF.select(
         F.col("LocationID").as("PU_LocationID"),
@@ -320,6 +336,7 @@ object SparkJob {
     ).drop("PU_LocationID")
     
     // Join with dropoff location zones (inner join)
+    // Perform the same enrichment for dropoffs; rows without matching DO zone are dropped.
     val withBothZones = withPickupZone.join(
       zonesDF.select(
         F.col("LocationID").as("DO_LocationID"),
@@ -341,10 +358,12 @@ object SparkJob {
                                    weeks: Int): org.apache.spark.sql.DataFrame = {
     import data.sparkSession.implicits._
     
+    // Prepare timestamp and hour columns used by multiple downstream KPI calculations.
     val withTimestamp = data
       .withColumn("pickup_ts", F.col("tpep_pickup_datetime").cast("timestamp"))
       .withColumn("hour", F.hour(F.col("pickup_ts")))
 
+    // Find the max pickup timestamp and compute an inclusive cutoff N weeks back.
     val maxPickupOpt = withTimestamp
       .agg(F.max("pickup_ts"))
       .as[java.sql.Timestamp]
@@ -355,6 +374,7 @@ object SparkJob {
       case Some(maxTs) =>
         val cutoffMillis = maxTs.getTime - (weeks.toLong * 7L * 24L * 60L * 60L * 1000L)
         val cutoffTs = new java.sql.Timestamp(Math.max(0L, cutoffMillis))
+        // Keep only records within the desired trailing window.
         withTimestamp.filter(F.col("pickup_ts") >= F.lit(cutoffTs))
       case None => withTimestamp
     }
@@ -369,6 +389,8 @@ object SparkJob {
                                           (implicit spark: SparkSession): (Int, Double) = {
     import spark.implicits._
     
+    // Compute the busiest hour of day across the filtered window and what
+    // fraction of total trips occurred in that hour.
     val totalTrips = data.count()
     if (totalTrips == 0) return (0, 0.0)
 
@@ -395,6 +417,8 @@ object SparkJob {
                                              (implicit spark: SparkSession): Double = {
     import spark.implicits._
     
+    // For each trip, compute revenue-per-mile and then average across trips.
+    // Exclude zero/negative distances to avoid divide-by-zero and bad data.
     data.filter(F.col("trip_distance") > 0)
       .agg(F.avg(F.col("total_amount") / F.col("trip_distance")))
       .as[Double]
@@ -409,6 +433,7 @@ object SparkJob {
    * Formula: (night trips / total trips) * 100
    */
   private def calculateNightTripPercentage(data: org.apache.spark.sql.DataFrame): Double = {
+    // Night defined as 00:00 <= hour < 06:00
     val totalTrips = data.count()
     if (totalTrips == 0) return 0.0
     
@@ -424,6 +449,8 @@ object SparkJob {
                                              (implicit spark: SparkSession): Long = {
     import spark.implicits._
     
+    // Compute trip duration in minutes for each row and divide by distance to get
+    // minutes-per-mile, then average across trips.
     val withDuration = data
       .withColumn("dropoff_ts", F.col("tpep_dropoff_datetime").cast("timestamp"))
       .withColumn("trip_minutes", 
@@ -487,19 +514,6 @@ object SparkJob {
         F.lit(nightPct).as("night_trip_percentage")
       )
       .as[ProjectKPIs]
-  }
-
-  /**
-   * Saves weekly metrics to parquet format at the specified path.
-   */
-  private def saveWeeklyMetrics(metrics: org.apache.spark.sql.Dataset[ProjectKPIs], 
-                                 outputPath: String): Unit = {
-    val metricsPath = if (outputPath.endsWith("/")) 
-      outputPath + "weekly_metrics" 
-    else 
-      outputPath + "/weekly_metrics"
-    
-    metrics.write.mode("overwrite").parquet(metricsPath)
   }
 
   def saveOutput(kpis: org.apache.spark.sql.Dataset[ProjectKPIs], outputPath: String): Unit = {

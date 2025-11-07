@@ -28,7 +28,13 @@ class SparkJobSpec extends AnyFunSuite with BeforeAndAfterAll {
 		Timestamp.from(ldt.atZone(ZoneId.systemDefault()).toInstant)
 	}
 
-	test("cleanData filters invalid rows and keeps only valid rows") {
+		// Purpose: This test builds a small dataset containing both good and bad trips
+		// (negative fares, zero distance, invalid passenger counts, dropoff before pickup,
+		// negative tips, invalid payment type). It verifies that cleanData removes all
+		// invalid rows and retains only the valid one.
+		// Prevents: Silent propagation of bad records into KPI calculations, which would
+		// skew metrics such as revenue per mile, peak hour, and minutes per mile.
+		test("cleanData filters invalid rows and keeps only valid rows") {
 		val s = spark
 		import s.implicits._
 
@@ -62,7 +68,12 @@ class SparkJobSpec extends AnyFunSuite with BeforeAndAfterAll {
 		assert(kept.trip_distance.contains(2.0))
 	}
 
-	test("cleanData throws on high null rate for critical columns") {
+		// Purpose: Construct input with >20% nulls in a critical column (fare_amount)
+		// and confirm that cleanData fails fast with a clear error. We deliberately
+		// make 3 out of 5 rows have fare_amount = null to exceed the threshold.
+		// Prevents: Running expensive jobs on incomplete/dirty inputs caused by
+		// upstream ingestion/Schema drift; ensures data contracts are enforced early.
+		test("cleanData throws on high null rate for critical columns") {
 		val s = spark
 		import s.implicits._
 
@@ -83,7 +94,12 @@ class SparkJobSpec extends AnyFunSuite with BeforeAndAfterAll {
 		assert(thrown.getMessage.contains("High null rates"))
 	}
 
-	test("cleanData throws when required column missing") {
+		// Purpose: Create a DataFrame that omits required columns and validate that
+		// cleanData throws an explicit IllegalArgumentException listing the missing
+		// fields.
+		// Prevents: Subtle NPEs or downstream mis-computations when essential columns
+		// are absent due to schema changes or source issues.
+		test("cleanData throws when required column missing") {
 		val s = spark
 
 		// Build rows that deliberately omit required columns from schema
@@ -103,7 +119,16 @@ class SparkJobSpec extends AnyFunSuite with BeforeAndAfterAll {
 		assert(thrown.getMessage.contains("Missing required columns"))
 	}
 
-	test("calculateKPIs computes expected metrics and writes weekly metrics") {
+		// Purpose: Build a deterministic dataset across a single week and assert that
+		// calculateKPIs returns the expected values for:
+		//  - peak hour and its percentage
+		//  - average revenue per mile
+		//  - average minutes per mile
+		//  - night trip percentage
+		// It also checks that weekly metrics are written to the provided output path.
+		// Prevents: Regressions in KPI formulas and output writing behavior when logic
+		// or dependencies change.
+		test("calculateKPIs computes expected metrics and writes weekly metrics") {
 	val s = spark
 	import s.implicits._
 
