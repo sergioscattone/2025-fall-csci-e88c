@@ -60,13 +60,13 @@ else:
         
         try:
             # Get unique values for aggregation
-            total_trips = int(df['total_trips'].iloc[0]) if 'total_trips' in df.columns else 0
-            total_revenue = float(df['total_revenue'].iloc[0]) if 'total_revenue' in df.columns else 0.0
-            avg_rev_per_mile = float(df['avg_revenue_per_mile'].iloc[0]) if 'avg_revenue_per_mile' in df.columns else 0.0
-            avg_min_per_mile = int(df['avg_minutes_per_mile'].iloc[0]) if 'avg_minutes_per_mile' in df.columns else 0
-            peak_hour = int(df['peak_hour'].iloc[0]) if 'peak_hour' in df.columns else 0
-            peak_hour_pct = float(df['peak_hour_trip_percentage'].iloc[0]) if 'peak_hour_trip_percentage' in df.columns else 0.0
-            night_trip_pct = float(df['night_trip_percentage'].iloc[0]) if 'night_trip_percentage' in df.columns else 0.0
+            total_trips = int(df['total_trips'].sum()) if 'total_trips' in df.columns else 0
+            total_revenue = float(df['total_revenue'].sum()) if 'total_revenue' in df.columns else 0.0
+            avg_rev_per_mile = float(df['avg_revenue_per_mile'].mean()) if 'avg_revenue_per_mile' in df.columns else 0.0
+            avg_min_per_mile = int(df['avg_minutes_per_mile'].mean()) if 'avg_minutes_per_mile' in df.columns else 0
+            peak_hour = int(df['peak_hour'].mode()[0]) if 'peak_hour' in df.columns else 0
+            peak_hour_pct = float(df['peak_hour_trip_percentage'].mean()) if 'peak_hour_trip_percentage' in df.columns else 0.0
+            night_trip_pct = float(df['night_trip_percentage'].mean()) if 'night_trip_percentage' in df.columns else 0.0
             
             # Format peak hour as 2-hour range
             peak_hour_end = (peak_hour + 2) % 24
@@ -112,7 +112,7 @@ else:
             
             with col1:
                 st.subheader("🚖 Trip Volume by Pickup Borough")
-                vol_by_borough = latest_df.groupby("borough")["trip_volume"].sum().sort_values(ascending=False)
+                vol_by_borough = latest_df.groupby("borough")["total_trips"].sum().sort_values(ascending=False)
                 top_boroughs = vol_by_borough.head(10)
                 
                 fig = px.bar(
@@ -130,11 +130,11 @@ else:
                 st.subheader("💰 Revenue Distribution by Pickup Borough")
                 # Calculate revenue per borough
                 revenue_by_borough = latest_df.groupby("borough").agg({
-                    'trip_volume': 'sum',
+                    'total_trips': 'sum',
                     'total_revenue': 'first'
                 }).reset_index()
                 revenue_by_borough['borough_revenue'] = (
-                    revenue_by_borough['trip_volume'] / revenue_by_borough['trip_volume'].sum() * 
+                    revenue_by_borough['total_trips'] / revenue_by_borough['total_trips'].sum() * 
                     revenue_by_borough['total_revenue']
                 )
                 top_revenue = revenue_by_borough.nlargest(10, 'borough_revenue')
@@ -156,10 +156,10 @@ else:
             with col5:
                 # Top performing boroughs by avg revenue per mile
                 borough_metrics = latest_df.groupby('borough').agg({
-                    'trip_volume': 'sum',
+                    'total_trips': 'sum',
                     'avg_revenue_per_mile': 'first'
                 }).reset_index()
-                borough_metrics = borough_metrics[borough_metrics['trip_volume'] > 100]  # Filter low volume
+                borough_metrics = borough_metrics[borough_metrics['total_trips'] > 100]  # Filter low volume
                 top_performers = borough_metrics.nlargest(10, 'avg_revenue_per_mile')
                 
                 fig = px.bar(
@@ -177,10 +177,10 @@ else:
             with col6:
                 # Trip efficiency
                 efficiency_metrics = latest_df.groupby('borough').agg({
-                    'trip_volume': 'sum',
+                    'total_trips': 'sum',
                     'avg_minutes_per_mile': 'first'
                 }).reset_index()
-                efficiency_metrics = efficiency_metrics[efficiency_metrics['trip_volume'] > 100]
+                efficiency_metrics = efficiency_metrics[efficiency_metrics['total_trips'] > 100]
                 top_efficient = efficiency_metrics.nsmallest(10, 'avg_minutes_per_mile')
                 
                 fig = px.bar(
@@ -204,34 +204,34 @@ else:
             with col7:
                 # Scatter plot: Minutes per Mile across boroughs
                 time_efficiency = latest_df.groupby('borough').agg({
-                    'trip_volume': 'sum',
+                    'total_trips': 'sum',
                     'avg_minutes_per_mile': 'first',
                     'avg_revenue_per_mile': 'first'
                 }).reset_index()
-                time_efficiency = time_efficiency[time_efficiency['trip_volume'] > 50]  # Filter low volume
+                time_efficiency = time_efficiency[time_efficiency['total_trips'] > 50]  # Filter low volume
                 
                 fig = px.scatter(
                     time_efficiency,
                     x='borough',
                     y='avg_minutes_per_mile',
-                    size='trip_volume',
+                    size='total_trips',
                     color='avg_revenue_per_mile',
                     title="Trip Efficiency by Borough (Minutes/Mile)",
                     labels={
                         'borough': 'Pickup Borough',
                         'avg_minutes_per_mile': 'Avg Minutes per Mile',
-                        'trip_volume': 'Trip Volume',
+                        'total_trips': 'Trip Volume',
                         'avg_revenue_per_mile': 'Revenue/Mile'
                     },
                     color_continuous_scale='RdYlGn_r',
-                    hover_data=['trip_volume', 'avg_revenue_per_mile']
+                    hover_data=['total_trips', 'avg_revenue_per_mile']
                 )
                 fig.update_layout(xaxis_tickangle=-45, height=400)
                 st.plotly_chart(fig, use_container_width=True)
             
             with col8:
                 # Dual-axis comparison: Time vs Revenue efficiency
-                top_boroughs_efficiency = time_efficiency.nlargest(10, 'trip_volume')
+                top_boroughs_efficiency = time_efficiency.nlargest(10, 'total_trips')
                 
                 fig = make_subplots(specs=[[{"secondary_y": True}]])
                 
@@ -272,24 +272,24 @@ else:
             try:
                 # Prepare data aggregated by week and borough
                 weekly_borough_data = df.groupby(['week_start', 'borough']).agg({
-                    'trip_volume': 'sum'
-                }).reset_index().sort_values(['week_start', 'trip_volume'], ascending=[True, False])
+                    'total_trips': 'sum'
+                }).reset_index().sort_values(['week_start', 'total_trips'], ascending=[True, False])
                 
                 # Create tabs for table and chart views
                 table_tab, chart_tab = st.tabs(["📊 Chart View", "📋 Table View"])
                 
                 with chart_tab:
                     # Get top 10 boroughs by total volume for cleaner visualization
-                    top_10_boroughs = df.groupby('borough')['trip_volume'].sum().nlargest(10).index.tolist()
+                    top_10_boroughs = df.groupby('borough')['total_trips'].sum().nlargest(10).index.tolist()
                     chart_data = weekly_borough_data[weekly_borough_data['borough'].isin(top_10_boroughs)]
                     
                     fig = px.bar(
                         chart_data,
                         x='week_start',
-                        y='trip_volume',
+                        y='total_trips',
                         color='borough',
                         title="Weekly Trip Volume by Pickup Borough (Top 10)",
-                        labels={'week_start': 'Week Start', 'trip_volume': 'Trip Volume', 'borough': 'Pickup Borough'},
+                        labels={'week_start': 'Week Start', 'total_trips': 'Trip Volume', 'borough': 'Pickup Borough'},
                         barmode='group',
                         height=500
                     )
@@ -305,7 +305,7 @@ else:
                         column_config={
                             "week_start": st.column_config.DateColumn("Week Start", format="YYYY-MM-DD"),
                             "borough": st.column_config.TextColumn("Pickup Borough"),
-                            "trip_volume": st.column_config.NumberColumn("Trip Volume", format="%d")
+                            "total_trips": st.column_config.NumberColumn("Trip Volume", format="%d")
                         }
                     )
                     
@@ -334,7 +334,7 @@ else:
         with tab1:
             if df is not None:
                 st.dataframe(
-                    df.sort_values(['week_start', 'trip_volume'], ascending=[False, False]),
+                    df.sort_values(['week_start', 'total_trips'], ascending=[False, False]),
                     use_container_width=True,
                     height=400
                 )
