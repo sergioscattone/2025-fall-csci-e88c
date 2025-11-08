@@ -212,82 +212,49 @@ This section documents the KPIs produced by the Spark job and how to run the job
    - Output persistence
 
 **Individual KPI Methods:**
-- `enrichWithZoneData()`: Enriches trips with pickup and dropoff borough/zone data via inner joins
-- `filterToRecentWeeks()`: Filters to N most recent weeks
-- `calculatePeakHourPercentage()`: Identifies peak hour and calculates trip percentage (returns tuple)
-- `calculateAverageRevenuePerMile()`: Revenue per mile
-- `calculateNightTripCount()`: Night trips (midnight-6am)
-- `calculateAverageMinutesPerMile()`: Trip duration per mile
-- `generateWeeklyMetrics()`: Aggregates metrics by week and pickup borough
-- `saveWeeklyMetrics()`: Persists weekly metrics to parquet
+   - `enrichWithZoneData()`: Enriches trips with pickup and dropoff borough/zone data via inner joins
+   - `filterToRecentWeeks()`: Filters to N most recent weeks
+   - `calculatePeakHourPercentage()`: Identifies peak hour and calculates trip percentage (returns tuple)
+   - `calculateAverageRevenuePerMile()`: Revenue per mile
+   - `calculateNightTripCount()`: Night trips (midnight-6am)
+   - `generateWeeklyMetrics()`: Aggregates metrics by week and pickup borough
+   - `saveWeeklyMetrics()`: Persists weekly metrics to parquet
+
 
 ### KPIs and exact formulas
-The Spark job writes a dataset with the following KPI fields. The formulas below match the code implementation in `spark/src/main/scala/org/cscie88c/spark/SparkJob.scala`.
+The Spark job writes a dataset with the following KPI fields, grouped by **week** and **borough**. The formulas below match the code implementation in `spark/src/main/scala/org/cscie88c/spark/SparkJob.scala`.
 
-- **week_start** (String)
-  - The ISO week start date for the trips included in the row (computed with date_trunc("week", pickup_ts) formatted as `yyyy-MM-dd`).
+**KPI Formulas:**
 
-- **borough** (String)
-  - The pickup borough from the NYC Taxi Zone lookup table (PU_Borough).
-  - Enriched via inner join on PULocationID with the taxi zone lookup CSV.
-  - Only trips with valid location IDs in the lookup table are included.
+- **total_trips**: Number of trips in the borough for the week
+  - $\text{total\_trips} = \text{count of rows}$
 
-- **trip_volume** (Long)
-  - Formula: `trip_volume = COUNT(*)`
-  - Meaning: number of trips in that week for that borough (after cleaning and filtering by the time window).
+- **total_revenue**: Sum of `total_amount` for all trips in the borough for the week
+  - $\text{total\_revenue} = \sum \text{total\_amount}$
 
-- **total_trips** (Long)
-  - Formula: `total_trips = COUNT(*)` over the same week across all boroughs
-  - Meaning: total number of trips in that week (used to compute percentages).
+- **peak_hour**: The hour (0-23) with the highest trip volume
+  - $\text{peak\_hour} = \arg\max_{h} \text{count of trips where hour(pickup\_ts) = h}$
 
-- **total_revenue** (Double)
-  - Formula: `total_revenue = SUM(total_amount)`
-  - Meaning: total revenue (sum of `total_amount`) for the week across all boroughs.
+- **peak_hour_trip_percentage**: Percentage of trips in the busiest hour
+  - $\text{peak\_hour\_trip\_percentage} = \frac{\text{trips in peak hour}}{\text{total\_trips}} \times 100$
 
-- **peak_hour** (Int)
-  - Method: `calculatePeakHourPercentage()` (returns tuple of hour and percentage)
-  - Code computation summary:
-    1. Compute trips per pickup hour h: `hour_count(h) = COUNT(*)` for each hour h (0..23) over the filtered range.
-    2. Identify the hour with maximum trip count
-  - Formula: `peak_hour = argmax_h(COUNT(trips where hour=h))`
-  - Meaning: The hour (0-23) with the highest trip volume during the filtered range.
+- **avg_minutes_per_mile**: Average trip duration per mile traveled
+  - $\text{avg\_minutes\_per\_mile} = \text{mean}\left(\frac{\text{dropoff\_ts} - \text{pickup\_ts}}{60 \times \text{trip\_distance}}\right)$
 
-- **peak_hour_trip_percentage** (Double)
-  - Method: `calculatePeakHourPercentage()` (returns tuple of hour and percentage)
-  - Code computation summary:
-    1. Compute trips per pickup hour h: `hour_count(h) = COUNT(*)` for each hour h (0..23) over the filtered range.
-    2. `totalTrips = SUM_h hour_count(h)`
-    3. `peakPercentage = (MAX_h hour_count(h) / totalTrips) * 100`
-  - Formula: `peak_hour_trip_percentage = (max_h COUNT(trips where hour=h) / totalTrips) * 100`
-  - Meaning: percentage of trips that occurred in the busiest (peak) hour during the filtered range. (If totalTrips == 0, this is set to 0.)
+- **avg_revenue_per_mile**: Average revenue earned per mile traveled
+  - $\text{avg\_revenue\_per\_mile} = \text{mean}\left(\frac{\text{total\_amount}}{\text{trip\_distance}}\right)$
 
-- **avg_minutes_per_mile** (Long)
-  - Method: `calculateAverageMinutesPerMile()`
-  - Code computation summary:
-    1. `trip_minutes = (unix_timestamp(dropoff_ts) - unix_timestamp(pickup_ts)) / 60.0`
-    2. `minutes_per_mile = trip_minutes / trip_distance` (only for rows where trip_distance > 0)
-    3. `avg_minutes_per_mile = CAST(AVG(minutes_per_mile) AS Long)`
-  - Formula: `avg_minutes_per_mile = CAST(AVG((dropoff_ts - pickup_ts) / 60 / trip_distance) AS LONG)`
-  - Meaning: average minutes per mile across trips (returned as a long integer). Trips with non-positive distance are excluded from this calculation.
+- **night_trip_percentage**: Percentage of trips during night hours (midnight-6am)
+  - $\text{night\_trip\_percentage} = \frac{\text{trips with hour(pickup\_ts) \in [0,5]}}{\text{total\_trips}} \times 100$
 
-- **avg_revenue_per_mile** (Double)
-  - Method: `calculateAverageRevenuePerMile()`
-  - Formula: `avg_revenue_per_mile = AVG(total_amount / trip_distance)` (computed only for trip_distance > 0)
-  - Meaning: the average revenue per mile across trips in the filtered window.
-
-- **night_trip_percentage** (Double)
-  - Method: `calculateNightTripPercentage()`
-  - Code computation summary: `nightTripPercentage = (COUNT(trips where hour >= 0 and hour < 6) / total_trips) * 100`
-  - Formula: `night_trip_percentage = (night_trips / total_trips) * 100`
-  - Meaning: percentage of trips that occurred during night hours (midnight to 6am).
+All metrics are aggregated by `week_start` and `borough` (pickup location). See the code for exact implementation details.
 
 ### Where outputs are written
-The Spark job writes two locations under the provided output path argument (outpath):
+The Spark job writes outputs under the provided output path argument (`outpath`):
 
-- `outpath/weekly_metrics` — parquet files containing weekly metrics grouped by `week_start` and `borough` (this is written inside `calculateKPIs(...)`).
-- `outpath/kpis` — parquet files containing the final KPIs dataset (this is written by `saveOutput(...)`).
+- `outpath/kpis` — parquet files containing the final KPIs dataset.
 
-When using the included `runSparkJob.sh`, the script passes `/opt/spark-data/output/` as the `outpath`. Because the host `data/` directory is mounted into the container at `/opt/spark-data`, the resulting files will appear on the host under `data/output/kpis` and `data/output/weekly_metrics`.
+When using the included `runSparkJob.sh`, the script passes `/opt/spark-data/output/` as the `outpath`. Because the host `data/` directory is mounted into the container at `/opt/spark-data`, the resulting files will appear on the host under `data/output/kpis`.
 
 ### How to run the Spark job (quick steps)
 1. Ensure you have the required data files in the `data/` folder:
@@ -310,7 +277,6 @@ The `runSparkJob.sh` script will:
 3. After the job completes, inspect the output directory on the host:
 
 - `data/output/kpis` (Parquet files with the final KPIs)
-- `data/output/weekly_metrics` (Parquet files with weekly metrics by borough)
 
 You can inspect Parquet files with tools like `parquet-tools` or by reading them with Spark/Python. Optionally, you may `docker exec` into the `spark-master` container and inspect `/opt/spark-data/output/` directly.
 
@@ -345,7 +311,6 @@ An interactive web dashboard that visualizes the Parquet outputs from the SparkJ
   - Bar charts for trip volume by pickup borough
   - Pie charts for revenue distribution by pickup location
   - Line charts for trends over time
-  - Heatmaps for weekly activity patterns by borough
   - Performance comparisons across pickup boroughs
 - 🎨 **Modern UI**: Clean design with Plotly charts and custom styling
 - 📥 **Data Export**: Download processed data as CSV
@@ -358,7 +323,6 @@ An interactive web dashboard that visualizes the Parquet outputs from the SparkJ
 - Stack: Streamlit + Plotly + Pandas + PyArrow
 - Data Sources:
   - `./data/output/kpis` — final KPIs (parquet)
-  - `./data/output/weekly_metrics` — weekly metrics (parquet)
 
 **Updated Field Names & Zone Enrichment (November 2025):**
 The dashboard now uses the refactored field names and zone-enriched data:
@@ -416,7 +380,7 @@ The dashboard now uses the refactored field names and zone-enriched data:
    - CSV export functionality
 
 **Troubleshooting:**
-- **No data showing?** Verify `data/output/kpis` and `data/output/weekly_metrics` exist with parquet files
+- **No data showing?** Verify `data/output/kpis` exists with parquet files
 - **Port conflict?** Change port mapping in `docker-compose-spark.yml`
 - **Dashboard not updating?** Restart the container: `docker-compose -f docker-compose-spark.yml restart evidence-dashboard`
 
