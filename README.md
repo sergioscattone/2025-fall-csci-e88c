@@ -217,30 +217,31 @@ This section documents the KPIs produced by the Spark job and how to run the job
    - `generateWeeklyMetrics()`: Aggregates metrics by week and pickup borough
 
 ### KPIs and exact formulas
+
 The Spark job writes a dataset with the following KPI fields, grouped by **week** and **borough**. The formulas below match the code implementation in `spark/src/main/scala/org/cscie88c/spark/SparkJob.scala`.
 
 **KPI Formulas:**
 
 - **total_trips**: Number of trips in the borough for the week
-  - $\text{total\_trips} = \text{count of rows}$
+   - `total_trips = count of rows`
 
 - **total_revenue**: Sum of `total_amount` for all trips in the borough for the week
-  - $\text{total\_revenue} = \sum \text{total\_amount}$
+   - `total_revenue = sum of total_amount`
 
 - **peak_hour**: The hour (0-23) with the highest trip volume
-  - $\text{peak\_hour} = \arg\max_{h} \text{count of trips where hour(pickup\_ts) = h}$
+   - `peak_hour = argmax_h(count of trips where hour(pickup_ts) = h)`
 
 - **peak_hour_trip_percentage**: Percentage of trips in the busiest hour
-  - $\text{peak\_hour\_trip\_percentage} = \frac{\text{trips in peak hour}}{\text{total\_trips}} \times 100$
+   - `peak_hour_trip_percentage = (trips in peak hour / total_trips) * 100`
 
 - **avg_minutes_per_mile**: Average trip duration per mile traveled
-  - $\text{avg\_minutes\_per\_mile} = \text{mean}\left(\frac{\text{dropoff\_ts} - \text{pickup\_ts}}{60 \times \text{trip\_distance}}\right)$
+   - `avg_minutes_per_mile = mean((dropoff_ts - pickup_ts) / (60 * trip_distance))`
 
 - **avg_revenue_per_mile**: Average revenue earned per mile traveled
-  - $\text{avg\_revenue\_per\_mile} = \text{mean}\left(\frac{\text{total\_amount}}{\text{trip\_distance}}\right)$
+   - `avg_revenue_per_mile = mean(total_amount / trip_distance)`
 
 - **night_trip_percentage**: Percentage of trips during night hours (midnight-6am)
-   - $\text{night\_trip\_percentage} = \frac{\#\{\text{trip} \mid \operatorname{hour}(pickup\_ts) \in [0,5]\}}{\text{total\_trips}} \times 100$
+      - `night_trip_percentage = (number of trips where hour(pickup_ts) in [0,5] / total_trips) * 100`
 
 All metrics are aggregated by `week_start` and `borough` (pickup location). See the code for exact implementation details.
 
