@@ -1,5 +1,6 @@
 ThisBuild / organization := "org.cscie88c"
-ThisBuild / scalaVersion := "2.13.16"
+// Align Scala version with AWS EMR Spark 3.5.x (built for Scala 2.12)
+ThisBuild / scalaVersion := "2.12.19"
 ThisBuild / version := "0.1.0-SNAPSHOT"
 ThisBuild / versionScheme := Some("semver-spec")
 
@@ -28,26 +29,27 @@ lazy val commonDependencies = Seq(
   // logging
   "com.typesafe.scala-logging" %% "scala-logging" % "3.9.2",
   "ch.qos.logback" % "logback-classic" % "1.2.3",
-
-  // parallel collections
-  "org.scala-lang.modules" %% "scala-parallel-collections" % "1.0.4",
 )
 
 // common settings
 lazy val commonSettings = Seq(
-    scalaVersion := "2.13.16",
+  // Use Scala 2.12 for Spark cluster compatibility
+  scalaVersion := "2.12.19",
     semanticdbEnabled := true,
     semanticdbVersion := scalafixSemanticdb.revision,
-    scalacOptions ++= Seq(
-      "-feature",
-      "-deprecation",
-      "-unchecked",
-      "-language:postfixOps",
-      "-language:higherKinds", // HKT required for Monads and other HKT types
-      "-Wunused", // for scalafix
-      "-Wunused:imports", // for scalafix
-      "-Yrangepos"
-    ),
+    // Adjust unused warnings depending on Scala binary version (2.13 vs 2.12)
+    scalacOptions ++= {
+      val base = Seq(
+        "-feature",
+        "-deprecation",
+        "-unchecked",
+        "-language:postfixOps",
+        "-language:higherKinds",
+        "-Yrangepos"
+      )
+      if (scalaBinaryVersion.value == "2.13") base ++ Seq("-Wunused", "-Wunused:imports")
+      else base ++ Seq("-Ywarn-unused:imports") // closest equivalent for Scala 2.12
+    },
     Compile / run / fork := true, // cleaner to run programs in a JVM different from sbt
     Compile / discoveredMainClasses := Seq(), // ignore discovered main classes
     // needed to run Spark with Java 17
@@ -58,6 +60,12 @@ lazy val commonSettings = Seq(
       "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED"
     ),
     libraryDependencies ++= commonDependencies,
+    // Add parallel-collections only for Scala 2.13+ (not published for 2.12)
+    libraryDependencies ++= {
+      if (scalaBinaryVersion.value == "2.13")
+        Seq("org.scala-lang.modules" %% "scala-parallel-collections" % "1.0.4")
+      else Seq.empty
+    },
     libraryDependencies ++= scalaTest,
 )
 
@@ -85,7 +93,6 @@ lazy val spark = project
     commonSettings,
     // Spark module settings)
   )
-  .dependsOn(core)
   .enablePlugins(JavaAppPackaging)
 
 lazy val beam = project

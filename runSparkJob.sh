@@ -1,14 +1,16 @@
 rm -f spark/target/scala-2.13/SparkJob.jar;
-sbt compile && sbt spark/assembly;
+# Build with Scala 2.13 for local Docker Spark 3.2.1
+# Note: For AWS EMR (Spark 3.5.x), use the Scala 2.12 JAR from spark/target/scala-2.12/
+sbt "set spark / scalaVersion := \"2.13.16\"" spark/compile spark/assembly;
 cp spark/target/scala-2.13/SparkJob.jar docker/apps/spark;
 
 # Rebuild dashboard to pick up any app.py (dashboard) changes
 echo "Rebuilding dashboard container...";
 docker build -t 2025-fall-csci-e88c_evidence-dashboard ./docker/apps/spark/dashboard;
 
-# Ensure any stale dashboard container is removed to avoid name conflicts
-echo "Cleaning up any existing evidence-dashboard container...";
-docker rm -f evidence-dashboard >/dev/null 2>&1 || true
+# Stop all containers and remove network to avoid configuration conflicts
+echo "Stopping existing containers and cleaning up network...";
+docker-compose -f docker-compose-spark.yml down >/dev/null 2>&1 || true
 
 docker-compose -f docker-compose-spark.yml up -d;
 sleep 5;

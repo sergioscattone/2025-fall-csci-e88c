@@ -1,7 +1,6 @@
 package org.cscie88c.spark
 
 import org.apache.spark.sql.SparkSession
-import org.cscie88c.core.Utils
 
 object SparkClusterJob {
   def main(args: Array[String]): Unit = {
@@ -15,7 +14,8 @@ object SparkClusterJob {
     import spark.implicits._
 
     val data = Seq("Edward", "Sumitra", "ChatGPT").toDF("name")
-    val result = data.map(row => Utils.greet(row.getString(0)))
+    // Inline a simple greet to avoid core module dependency
+    val result = data.map(row => s"Hello, ${row.getString(0)}")
 
     result.show(false)
 

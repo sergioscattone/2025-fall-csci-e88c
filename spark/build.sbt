@@ -1,8 +1,9 @@
 name := "spark"
 
+// Match Spark dependency minor with EMR runtime (Spark 3.5.6-amzn-0 uses 3.5.x APIs, built for Scala 2.12)
 libraryDependencies ++= Seq(
-  "org.apache.spark" %% "spark-core" % "3.5.1" % Provided,
-  "org.apache.spark" %% "spark-sql"  % "3.5.1" % Provided
+  "org.apache.spark" %% "spark-core" % "3.5.6" % Provided,
+  "org.apache.spark" %% "spark-sql"  % "3.5.6" % Provided
 )
 
 Compile / mainClass := Some("org.cscie88c.spark.SparkJob")

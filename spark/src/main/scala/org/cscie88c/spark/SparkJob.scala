@@ -489,17 +489,17 @@ object SparkJob {
       val avg_revenue_per_mile = row.getAs[Double]("avg_revenue_per_mile")
       val night_trips = row.getAs[Long]("night_trips")
 
-      // Compute peak hour and percentage
-      val hourCounts = hours.groupBy(identity).view.mapValues(_.size).toMap
-      val (peak_hour, peak_count) =
-        if (hourCounts.nonEmpty) hourCounts.maxBy(_._2) else (0, 0)
+      // Compute peak hour and percentage (Scala 2.12: avoid view.mapValues usage)
+      val hourCounts: Map[Int, Int] = hours.groupBy(identity).map { case (h, seq) => h -> seq.size }
+      val (peak_hour, peak_count): (Int, Int) =
+        if (hourCounts.nonEmpty) hourCounts.maxBy(_._2) else (0 -> 0)
       val peak_hour_trip_percentage =
-        if (total_trips > 0) (peak_count.toDouble / total_trips) * 100.0
+        if (total_trips > 0) (peak_count.toDouble / total_trips.toDouble) * 100.0
         else 0.0
 
       // Night trip percentage
       val night_trip_percentage =
-        if (total_trips > 0) (night_trips.toDouble / total_trips) * 100.0
+        if (total_trips > 0) (night_trips.toDouble / total_trips.toDouble) * 100.0
         else 0.0
 
       ProjectKPIs(
