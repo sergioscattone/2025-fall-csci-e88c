@@ -38,12 +38,10 @@ case class TaxiZone(
   *   Week starting date (yyyy-MM-dd format)
   * @param borough
   *   Borough identifier (based on pickup location)
-  * @param trip_volume
-  *   Number of trips in this borough for this week
   * @param total_trips
-  *   Total trips across all boroughs for this week
+  *   Total trips in a borough for this week
   * @param total_revenue
-  *   Total revenue across all boroughs for this week
+  *   Total revenue in a borough for this week
   * @param peak_hour
   *   The hour (0-23) with the highest trip volume
   * @param peak_hour_trip_percentage

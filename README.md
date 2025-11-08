@@ -214,12 +214,7 @@ This section documents the KPIs produced by the Spark job and how to run the job
 **Individual KPI Methods:**
    - `enrichWithZoneData()`: Enriches trips with pickup and dropoff borough/zone data via inner joins
    - `filterToRecentWeeks()`: Filters to N most recent weeks
-   - `calculatePeakHourPercentage()`: Identifies peak hour and calculates trip percentage (returns tuple)
-   - `calculateAverageRevenuePerMile()`: Revenue per mile
-   - `calculateNightTripCount()`: Night trips (midnight-6am)
    - `generateWeeklyMetrics()`: Aggregates metrics by week and pickup borough
-   - `saveWeeklyMetrics()`: Persists weekly metrics to parquet
-
 
 ### KPIs and exact formulas
 The Spark job writes a dataset with the following KPI fields, grouped by **week** and **borough**. The formulas below match the code implementation in `spark/src/main/scala/org/cscie88c/spark/SparkJob.scala`.
@@ -245,7 +240,7 @@ The Spark job writes a dataset with the following KPI fields, grouped by **week*
   - $\text{avg\_revenue\_per\_mile} = \text{mean}\left(\frac{\text{total\_amount}}{\text{trip\_distance}}\right)$
 
 - **night_trip_percentage**: Percentage of trips during night hours (midnight-6am)
-  - $\text{night\_trip\_percentage} = \frac{\text{trips with hour(pickup\_ts) \in [0,5]}}{\text{total\_trips}} \times 100$
+   - $\text{night\_trip\_percentage} = \frac{\#\{\text{trip} \mid \operatorname{hour}(pickup\_ts) \in [0,5]\}}{\text{total\_trips}} \times 100$
 
 All metrics are aggregated by `week_start` and `borough` (pickup location). See the code for exact implementation details.
 
