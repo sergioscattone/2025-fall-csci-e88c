@@ -193,6 +193,10 @@ This section documents the KPIs produced by the Spark job and how to run the job
 
 ## Code Architecture
 
+**Class Overview:**
+
+![class_structure](img/class_structure.png)
+
 **Data Processing Pipeline:**
 1. **Bronze Layer** (`loadInputFile`, `loadTaxiZoneLookup`): 
    - Loads raw parquet data into TaxiTrip dataset
@@ -300,6 +304,11 @@ Example with custom number of weeks (inside the container):
 
 An interactive web dashboard that visualizes the Parquet outputs from the SparkJob, providing comprehensive analytics with beautiful charts and insights.
 
+**Capture:**
+![dashboard1](img/dashboard1.png)
+![dashboard2](img/dashboard2.png)
+![dashboard3](img/dashboard3.png)
+
 **Features:**
 - 📈 **Real-time KPI Metrics**: Total trips, revenue, efficiency metrics
 - �️ **Borough-Level Analytics**: All metrics aggregated by pickup borough using NYC Taxi Zone data
@@ -350,6 +359,26 @@ The dashboard now uses the refactored field names and zone-enriched data:
    ```bash
    docker-compose -f docker-compose-spark.yml down
    ```
+
+**AWS implementation:**
+
+1. **Batch of Jobs**
+![batch_jobs](img/aws1.png)
+
+2. **Input Datasets**
+![input_datasets](img/aws2.png)
+
+3. **Jar File**
+![jar_file](img/aws3.png)
+
+4. **Job Details**
+![job_details](img/aws4.png)
+
+5. **Job Std Out**
+![job_std_out](img/aws5.png)
+
+6. **Job Parquet Result**
+![job_parquet_result](img/aws6.png)
 
 **Dashboard Sections:**
 
